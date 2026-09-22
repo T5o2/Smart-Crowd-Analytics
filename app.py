@@ -4,40 +4,81 @@ from PIL import Image
 # 1. إعدادات الصفحة
 st.set_page_config(page_title="أرصاد الحشود | Crowd Analytics", page_icon="🕋", layout="wide")
 
-# 2. تصميم CSS احترافي للوحة قيادة الأرصاد (Dashboard)
+# 2. تصميم CSS احترافي للوحة القيادة وفرض اتجاه اللغة العربية (RTL)
 st.markdown("""
 <style>
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     [data-testid="stHeader"] {visibility: hidden;}
-    .block-container {padding-top: 2rem !important;}
+    
+    /* قلب الموقع بالكامل ليدعم العربية من اليمين لليسار */
+    .block-container {
+        padding-top: 2rem !important;
+        direction: rtl;
+    }
+    
+    /* تعديل القائمة الجانبية لتكون RTL */
+    [data-testid="stSidebar"] {
+        direction: rtl;
+        text-align: right;
+    }
     
     /* تصميم بطاقات الأرصاد لتكون فخمة ومميزة */
     .metric-card {
         background-color: #f8f9fa;
         border-radius: 15px;
-        padding: 20px;
+        padding: 25px 20px;
         text-align: center;
-        border-top: 6px solid #d4af37; /* لون ذهبي يتناسب مع هوية الحرم */
+        border-top: 6px solid #d4af37; /* لون ذهبي */
         box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-        transition: transform 0.3s;
+        transition: transform 0.3s ease;
+        height: 100%;
     }
     .metric-card:hover {
         transform: translateY(-5px);
     }
+    .metric-title {
+        color: #888;
+        font-size: 1.1rem;
+        margin-bottom: 15px;
+        font-weight: 600;
+    }
+    .metric-value-red {
+        color: #ff4b4b;
+        font-size: 3rem;
+        font-weight: bold;
+        margin: 10px 0;
+    }
+    .metric-value-gold {
+        color: #d4af37;
+        font-size: 2rem;
+        font-weight: bold;
+        margin: 15px 0;
+    }
+    .metric-text {
+        font-size: 1.3rem;
+        font-weight: bold;
+        color: #333;
+    }
+    .metric-subtext {
+        font-size: 0.95rem;
+        color: #666;
+        line-height: 1.5;
+        margin-top: 10px;
+    }
+    
     @media (prefers-color-scheme: dark) {
-        .metric-card {
-            background-color: #1e1e1e;
-            border-top: 6px solid #d4af37;
-        }
+        .metric-card { background-color: #1e1e1e; }
+        .metric-text { color: #eee; }
+        .metric-subtext { color: #aaa; }
     }
 </style>
 """, unsafe_allow_html=True)
 
 # 3. القائمة الجانبية: اختيار مصدر البيانات
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/3340/3340156.png", width=80)
-    st.title("📡 مركز التحكم")
+    st.markdown("<h1 style='text-align: center; font-size: 3rem;'>📡</h1>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center;'>مركز التحكم</h2>", unsafe_allow_html=True)
     st.markdown("---")
     source_type = st.radio("📍 حدد مصدر البيانات للتحليل:", 
                            ["📷 تحليل صورة ثابتة", "🎥 تحليل فيديو مسجل", "🔗 استشعار بث يوتيوب مباشر"])
@@ -73,7 +114,7 @@ elif source_type == "🔗 استشعار بث يوتيوب مباشر":
 
 st.markdown("---")
 
-# 6. لوحة أرصاد الزحام (تصميم مبدئي ليراه المستخدم كنتيجة نهائية)
+# 6. لوحة أرصاد الزحام (التصميم الاحترافي الجديد)
 st.markdown("### 🌡️ مؤشرات أرصاد الحشود (لوحة القيادة)")
 
 col1, col2, col3 = st.columns(3)
@@ -81,26 +122,26 @@ col1, col2, col3 = st.columns(3)
 with col1:
     st.markdown('''
         <div class="metric-card">
-            <h4 style="color:gray;">مؤشر الكثافة (Density)</h4>
-            <h1 style="color:#ff4b4b;">85%</h1>
-            <p>🔴 زحام شديد (حرجة)</p>
+            <div class="metric-title">مؤشر الكثافة (Density)</div>
+            <div class="metric-value-red">85%</div>
+            <div class="metric-text">🔴 زحام شديد (حرجة)</div>
         </div>
     ''', unsafe_allow_html=True)
 
 with col2:
     st.markdown('''
         <div class="metric-card">
-            <h4 style="color:gray;">توزيع الفئات (استنتاج لوني)</h4>
-            <h2>⚪ 65% رجال (إحرام)</h2>
-            <h2>⚫ 35% نساء (عباءات)</h2>
+            <div class="metric-title">توزيع الفئات (استنتاج لوني)</div>
+            <div class="metric-text" style="margin-top: 15px;">⚪ 65% رجال (إحرام)</div>
+            <div class="metric-text" style="margin-top: 15px;">⚫ 35% نساء (عباءات)</div>
         </div>
     ''', unsafe_allow_html=True)
 
 with col3:
     st.markdown('''
         <div class="metric-card">
-            <h4 style="color:gray;">حالة الموقع والتوصية</h4>
-            <h2 style="color:#ffa500;">⚠️ يتطلب تدخل</h2>
-            <p>ينصح بتوجيه تدفق المعتمرين إلى أدوار التوسعة لتخفيف الضغط عن صحن المطاف.</p>
+            <div class="metric-title">حالة الموقع والتوصية</div>
+            <div class="metric-value-gold">⚠️ يتطلب تدخل</div>
+            <div class="metric-subtext">ينصح بتوجيه تدفق المعتمرين إلى أدوار التوسعة لتخفيف الضغط عن صحن المطاف.</div>
         </div>
     ''', unsafe_allow_html=True)
