@@ -30,29 +30,23 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 1. تحميل النموذج المركزي
 @st.cache_resource
 def load_model():
     return YOLO("yolov8s.pt")
 
 model = load_model()
 
-# 2. إعدادات الواجهة
 col_settings, col_empty = st.columns([1, 10])
 with col_settings:
     with st.popover("⚙️ إعدادات النظام"):
         source_type = st.radio("مصدر البيانات:", ["صورة ثابتة", "فيديو مسجل", "بث مباشر (يوتيوب)"], label_visibility="collapsed")
-        conf_thresh = st.slider("دقة الرصد (Confidence):", 0.05, 1.0, 0.15, 0.05)
-        # خيار لدقة المعالجة، نجعله 640 للفيديو لتجنب التعليق، و1280 للصور
-        ai_res = st.selectbox("دقة فحص الذكاء الاصطناعي:", [640, 1280], index=0)
+        # تم إزالة خيارات الدقة من هنا وتثبيتها في الكود الداخلي
 
 st.title("🕋 المنصة الذكية لأرصاد الحشود")
-st.markdown("### نظام الاستشعار الموحد (Unified AI Pipeline) للصور والفيديو والبث اللحظي")
+st.markdown("### نظام الاستشعار الموحد للصور والفيديو والبث اللحظي")
 st.markdown("---")
 
-# 3. العقل المركزي (الدالة الموحدة التي تحلل أي لقطة تمرر لها)
-def process_frame(frame_bgr, conf, img_size):
-    # الفحص عبر YOLO
+def process_frame(frame_bgr, conf=0.15, img_size=1280):
     results = model.predict(frame_bgr, classes=[0], conf=conf, imgsz=img_size, verbose=False)
     
     men_count = 0
@@ -67,37 +61,48 @@ def process_frame(frame_bgr, conf, img_size):
             
         hsv_crop = cv2.cvtColor(person_crop, cv2.COLOR_BGR2HSV)
         
-        # تحليل الألوان
-        lower_white = np.array([0, 0, 150])
-        upper_white = np.array([180, 50, 255])
+        # تحسين نطاقات الألوان لتمييز الإحرام والعباءات بشكل أفضل
+        # الإحرام (أبيض ساطع)
+        lower_white = np.array([0, 0, 180])
+        upper_white = np.array([180, 40, 255])
         mask_white = cv2.inRange(hsv_crop, lower_white, upper_white)
         
+        # العباءات (أسود داكن)
         lower_black = np.array([0, 0, 0])
-        upper_black = np.array([180, 255, 70])
+        upper_black = np.array([180, 255, 50])
         mask_black = cv2.inRange(hsv_crop, lower_black, upper_black)
         
         white_px = cv2.countNonZero(mask_white)
         black_px = cv2.countNonZero(mask_black)
         
-        if white_px > black_px:
+        # الاعتماد على نسبة بكسلات اللون لتحديد التصنيف
+        if white_px > black_px and white_px > (person_crop.size // 3) * 0.1: # يجب أن يكون هناك حد أدنى من البياض
             men_count += 1
             color = (255, 255, 255) 
-        else:
+        elif black_px > white_px and black_px > (person_crop.size // 3) * 0.1:
             women_count += 1
-            color = (255, 0, 0) 
+            color = (255, 0, 0) # أزرق للتمييز البصري
+        else:
+            # إذا لم يكن اللون الغالب أبيض ولا أسود (مثل العساكر أو ملابس ملونة)، يمكننا تجاوزه أو إضافته لعداد مختلف (حالياً نتجاهله في حساب الفئات)
+            color = (0, 255, 0) # لون أخضر للفئات غير المحددة
             
         cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), color, 2)
         
     frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-    MAX_CAPACITY = 500
+    MAX_CAPACITY = 1000 # تم رفع السعة التقديرية لتناسب الحرم
     density = min(int((total_people / MAX_CAPACITY) * 100), 100)
     
-    men_ratio = int((men_count / total_people) * 100) if total_people > 0 else 0
-    women_ratio = 100 - men_ratio if total_people > 0 else 0
+    # حساب النسب بناءً على من تم تصنيفهم فقط (رجال/نساء)
+    classified_total = men_count + women_count
+    if classified_total > 0:
+        men_ratio = int((men_count / classified_total) * 100)
+        women_ratio = 100 - men_ratio
+    else:
+        men_ratio = 0
+        women_ratio = 0
         
     return frame_rgb, density, total_people, men_ratio, women_ratio
 
-# دالة لتحديث لوحة الأرصاد في الواجهة
 def update_dashboard(density, total_ppl, men_r, women_r, placeholders):
     color_dens = "#ff4b4b" if density > 70 else "#00fa9a"
     placeholders[0].markdown(f'<div class="metric-box"><div class="metric-title">مؤشر الكثافة</div><div class="metric-val" style="color:{color_dens}">{density}%</div></div>', unsafe_allow_html=True)
@@ -105,7 +110,6 @@ def update_dashboard(density, total_ppl, men_r, women_r, placeholders):
     placeholders[2].markdown(f'<div class="metric-box"><div class="metric-title">رجال (إحرام)</div><div class="metric-val" style="color:#fff">{men_r}%</div></div>', unsafe_allow_html=True)
     placeholders[3].markdown(f'<div class="metric-box"><div class="metric-title">نساء (عباءات)</div><div class="metric-val" style="color:#4da6ff">{women_r}%</div></div>', unsafe_allow_html=True)
 
-# 4. توجيه المدخلات إلى العقل المركزي
 if source_type == "صورة ثابتة":
     uploaded_file = st.file_uploader("📂 ارفع صورة...", type=["jpg", "jpeg", "png"])
     if uploaded_file:
@@ -113,16 +117,23 @@ if source_type == "صورة ثابتة":
         img_array_rgb = np.array(image)
         img_array_bgr = cv2.cvtColor(img_array_rgb, cv2.COLOR_RGB2BGR)
         
-        st.markdown("#### 🎯 لوحة الأرصاد والرصد الآلي")
-        img_placeholder = st.empty()
-        img_placeholder.image(img_array_rgb, use_container_width=True)
-        
+        # إعادة الواجهة للعمودين
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### 📷 اللقطة الأصلية")
+            st.image(image, use_container_width=True)
+        with col2:
+            st.markdown("#### 🎯 الرصد الآلي")
+            img_placeholder = st.empty()
+            
+        st.markdown("---")
+        st.markdown("#### 📊 لوحة الأرصاد")
         c1, c2, c3, c4 = st.columns(4)
         dash_placeholders = [c1.empty(), c2.empty(), c3.empty(), c4.empty()]
         
         if st.button("🚀 بدء تحليل الزحام"):
             with st.spinner("جاري التحليل..."):
-                out_rgb, dens, ppl, m_r, w_r = process_frame(img_array_bgr, conf_thresh, ai_res)
+                out_rgb, dens, ppl, m_r, w_r = process_frame(img_array_bgr)
                 img_placeholder.image(out_rgb, use_container_width=True)
                 update_dashboard(dens, ppl, m_r, w_r, dash_placeholders)
 
@@ -141,7 +152,7 @@ elif source_type == "فيديو مسجل":
         
         if not stop_btn:
             cap = cv2.VideoCapture(tfile.name)
-            frame_skip = 10 # تخطي الإطارات لتسريع العرض
+            frame_skip = 5 # تقليل التخطي لزيادة الدقة في الفيديو
             count = 0
             
             while cap.isOpened():
@@ -149,9 +160,10 @@ elif source_type == "فيديو مسجل":
                 if not ret: break
                 
                 count += 1
-                if count % frame_skip != 0: continue # فحص لقطة وتخطي الباقي لضمان سرعة السيرفر
+                if count % frame_skip != 0: continue
                     
-                out_rgb, dens, ppl, m_r, w_r = process_frame(frame, conf_thresh, ai_res)
+                # استخدام دقة 640 للفيديو لتجنب بطء السيرفر
+                out_rgb, dens, ppl, m_r, w_r = process_frame(frame, img_size=640)
                 img_placeholder.image(out_rgb, use_container_width=True)
                 update_dashboard(dens, ppl, m_r, w_r, dash_placeholders)
                 
@@ -175,7 +187,7 @@ elif source_type == "بث مباشر (يوتيوب)":
                     stream_url = info['url']
                 
                 cap = cv2.VideoCapture(stream_url)
-                frame_skip = 30 # فحص لقطة واحدة كل ثانية من البث
+                frame_skip = 30 
                 count = 0
                 
                 while cap.isOpened():
@@ -185,10 +197,11 @@ elif source_type == "بث مباشر (يوتيوب)":
                     count += 1
                     if count % frame_skip != 0: continue
                         
-                    out_rgb, dens, ppl, m_r, w_r = process_frame(frame, conf_thresh, ai_res)
+                    # استخدام دقة 640 للبث المباشر
+                    out_rgb, dens, ppl, m_r, w_r = process_frame(frame, img_size=640)
                     img_placeholder.image(out_rgb, use_container_width=True)
                     update_dashboard(dens, ppl, m_r, w_r, dash_placeholders)
                     
                 cap.release()
             except Exception as e:
-                st.error(f"❌ حدث خطأ في سحب البث. قد يكون الرابط محمياً. التفاصيل: {e}")
+                st.error(f"❌ حدث خطأ في سحب البث: {e}")
