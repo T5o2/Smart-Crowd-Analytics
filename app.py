@@ -2,11 +2,11 @@ import streamlit as st
 from PIL import Image
 import cv2
 import numpy as np
+from ultralytics import YOLO
 
-# 1. إعدادات الصفحة
 st.set_page_config(page_title="أرصاد الحشود | Crowd Analytics", page_icon="🕋", layout="wide")
 
-# 2. تصميم CSS عصري واحترافي (وداعاً للتصميم البيسك)
+# 1. تنظيف الواجهة بدون إجبار (RTL) الذي يخرب التنسيق
 st.markdown("""
 <style>
     #MainMenu {visibility: hidden;}
@@ -15,152 +15,143 @@ st.markdown("""
     
     .block-container {
         padding-top: 2rem !important;
-        direction: rtl;
     }
     
-    /* تصميم بطاقات المؤشرات المتقدمة */
-    .custom-card {
+    .metric-box {
         background-color: #1e1e2f;
-        border-radius: 12px;
+        border-radius: 10px;
         padding: 20px;
         text-align: center;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        border-left: 5px solid #d4af37;
         margin-bottom: 15px;
-        border: 1px solid #333;
     }
-    .custom-card h4 {
-        color: #a0a0b0;
-        font-size: 1.1rem;
-        margin-bottom: 15px;
-        font-weight: 500;
-    }
-    .value-red { color: #ff4b4b; font-size: 2.5rem; font-weight: bold; }
-    .value-green { color: #00fa9a; font-size: 2.5rem; font-weight: bold; }
-    .value-blue { color: #4da6ff; font-size: 2rem; font-weight: bold; margin-bottom: 5px;}
-    .value-white { color: #ffffff; font-size: 2rem; font-weight: bold; }
-    
-    .status-alert { color: #ff4b4b; font-size: 1.2rem; font-weight: bold; margin-top: 10px;}
-    .status-safe { color: #00fa9a; font-size: 1.2rem; font-weight: bold; margin-top: 10px;}
+    .metric-title { color: #a0a0b0; font-size: 1.1rem; margin-bottom: 10px; }
+    .metric-val { font-size: 2rem; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
-# 3. محرك الذكاء الاصطناعي (تحليل الكثافة والألوان)
-def analyze_crowd_heuristic(image_array):
-    # تحويل الصورة إلى وضع HSV الأفضل في التقاط الألوان
-    hsv = cv2.cvtColor(image_array, cv2.COLOR_RGB2HSV)
-    
-    # 1. التقاط اللون الأبيض (المحرمين)
-    lower_white = np.array([0, 0, 200])
-    upper_white = np.array([180, 40, 255])
-    mask_white = cv2.inRange(hsv, lower_white, upper_white)
-    
-    # 2. التقاط الألوان الداكنة جداً (العباءات)
-    lower_black = np.array([0, 0, 0])
-    upper_black = np.array([180, 255, 50])
-    mask_black = cv2.inRange(hsv, lower_black, upper_black)
-    
-    # حساب عدد البكسلات
-    white_pixels = cv2.countNonZero(mask_white)
-    black_pixels = cv2.countNonZero(mask_black)
-    total_pixels = image_array.shape[0] * image_array.shape[1]
-    
-    # حساب إجمالي البشر التقديري
-    crowd_pixels = white_pixels + black_pixels
-    
-    # تجنب القسمة على صفر إذا كانت الصورة فارغة
-    if crowd_pixels == 0:
-        return 0, 50, 50, image_array
-        
-    # معادلة الكثافة (نعتبر أن 30% من الشاشة لو امتلأت بالبشر تعني زحام 100%)
-    density = min(int((crowd_pixels / (total_pixels * 0.30)) * 100), 100)
-    
-    # معادلة نسبة الرجال للنساء
-    men_ratio = int((white_pixels / crowd_pixels) * 100)
-    women_ratio = 100 - men_ratio
-    
-    # إنشاء "خريطة حرارية" بصرية (Heatmap) للنتيجة
-    combined_mask = cv2.add(mask_white, mask_black)
-    heatmap = cv2.applyColorMap(combined_mask, cv2.COLORMAP_JET)
-    output_image = cv2.addWeighted(image_array, 0.7, heatmap, 0.3, 0)
-    
-    return density, men_ratio, women_ratio, output_image
+# 2. تحميل نموذج YOLO (للبحث عن البشر فقط - كلاس 0)
+@st.cache_resource
+def load_model():
+    return YOLO("yolov8n.pt")
 
-# 4. لوحة الإعدادات العائمة
+model = load_model()
+
+# 3. القائمة الجانبية الأنيقة (نفس مشروعك القديم)
 col_settings, col_empty = st.columns([1, 10])
 with col_settings:
     with st.popover("⚙️ إعدادات النظام"):
         source_type = st.radio("مصدر البيانات:", ["صورة ثابتة", "فيديو مسجل", "يوتيوب مباشر"], label_visibility="collapsed")
+        conf_thresh = st.slider("دقة الرصد:", 0.1, 1.0, 0.25, 0.05)
 
-# 5. الواجهة الرئيسية
 st.title("🕋 المنصة الذكية لأرصاد الحشود")
-st.markdown("### تحليل الكثافة وتوزيع الفئات باستخدام (Color Segmentation)")
+st.markdown("### تحليل الكثافة وتوزيع الفئات باستخدام (YOLO + Color AI)")
 st.markdown("---")
 
-if source_type == "صورة ثابتة":
-    uploaded_file = st.file_uploader("📂 ارفع صورة لساحات الحرم (JPG, PNG)...", type=["jpg", "jpeg", "png"])
+# 4. محرك الذكاء الاصطناعي المزدوج
+def analyze_crowd_smart(image_array, conf):
+    # 1. رصد البشر باستخدام YOLO
+    results = model.predict(image_array, classes=[0], conf=conf)
     
-    if uploaded_file is not None:
-        image = Image.open(uploaded_file)
-        img_array = np.array(image)
+    img_cv2 = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
+    
+    men_count = 0
+    women_count = 0
+    total_people = len(results[0].boxes)
+    
+    for box in results[0].boxes:
+        x1, y1, x2, y2 = map(int, box.xyxy[0])
         
+        # اقتطاع صورة الشخص فقط من داخل المربع
+        person_crop = img_cv2[y1:y2, x1:x2]
+        
+        if person_crop.size == 0:
+            continue
+            
+        hsv_crop = cv2.cvtColor(person_crop, cv2.COLOR_BGR2HSV)
+        
+        # فحص اللون الأبيض (إحرام) داخل مربع الشخص فقط
+        lower_white = np.array([0, 0, 180])
+        upper_white = np.array([180, 50, 255])
+        mask_white = cv2.inRange(hsv_crop, lower_white, upper_white)
+        
+        # فحص الألوان الداكنة (عباءات) داخل مربع الشخص فقط
+        lower_black = np.array([0, 0, 0])
+        upper_black = np.array([180, 255, 60])
+        mask_black = cv2.inRange(hsv_crop, lower_black, upper_black)
+        
+        white_px = cv2.countNonZero(mask_white)
+        black_px = cv2.countNonZero(mask_black)
+        
+        # تصنيف الشخص ورسم المربع
+        if white_px > black_px:
+            men_count += 1
+            color = (255, 255, 255) # مربع أبيض للرجل
+            label = "Ihram"
+        else:
+            women_count += 1
+            color = (255, 0, 0) # مربع أزرق للمرأة (للتوضيح)
+            label = "Abaya"
+            
+        cv2.rectangle(img_cv2, (x1, y1), (x2, y2), color, 2)
+        
+    res_rgb = cv2.cvtColor(img_cv2, cv2.COLOR_BGR2RGB)
+    
+    # حساب نسبة الزحام (بافتراض أن 1000 شخص في الكادر يعني زحام 100%)
+    MAX_CAPACITY = 1000
+    density = min(int((total_people / MAX_CAPACITY) * 100), 100)
+    
+    # حساب النسب المئوية
+    if total_people > 0:
+        men_ratio = int((men_count / total_people) * 100)
+        women_ratio = 100 - men_ratio
+    else:
+        men_ratio = 0
+        women_ratio = 0
+        
+    return density, total_people, men_ratio, women_ratio, res_rgb
+
+# 5. معالجة الأقسام
+if source_type == "صورة ثابتة":
+    uploaded_file = st.file_uploader("📂 ارفع صورة لساحات الحرم...", type=["jpg", "jpeg", "png"])
+    
+    if uploaded_file:
+        image = Image.open(uploaded_file)
         col1, col2 = st.columns(2)
+        
         with col1:
             st.markdown("#### 📷 اللقطة الأصلية")
             st.image(image, use_container_width=True)
             
         with col2:
-            st.markdown("#### 🎯 الخريطة الحرارية (Heatmap)")
-            heatmap_placeholder = st.empty()
-            heatmap_placeholder.info("اضغط على زر الفحص لتوليد الخريطة...")
+            st.markdown("#### 🎯 الرصد الآلي (YOLO + Colors)")
+            res_placeholder = st.empty()
             
-        if st.button("🚀 بدء تحليل الزحام الفعلي"):
-            with st.spinner("جاري مسح البكسلات وتحليل الألوان..."):
-                # استدعاء محرك الذكاء الاصطناعي الحقيقي
-                density, men, women, out_img = analyze_crowd_heuristic(img_array)
+        if st.button("🚀 بدء تحليل الزحام"):
+            with st.spinner("جاري رصد الأشخاص وتحليل الألوان..."):
+                img_array = np.array(image)
+                density, total_ppl, men_r, women_r, out_img = analyze_crowd_smart(img_array, conf_thresh)
                 
-                # عرض الصورة المعالجة
-                heatmap_placeholder.image(out_img, use_container_width=True)
+                res_placeholder.image(out_img, use_container_width=True)
                 
                 st.markdown("---")
-                st.markdown("### 📊 لوحة أرصاد الحشود (نتائج حقيقية)")
+                st.markdown("### 📊 تقرير أرصاد الحشود الفعلي")
+                st.progress(density / 100)
                 
-                # تصميم البطاقات الديناميكي
-                c1, c2, c3 = st.columns(3)
-                
-                with c1:
-                    density_color = "value-red" if density > 75 else "value-green"
-                    density_status = "🔴 زحام شديد (حرجة)" if density > 75 else "🟢 انسيابية في الحركة"
-                    status_class = "status-alert" if density > 75 else "status-safe"
-                    
-                    st.markdown(f'''
-                        <div class="custom-card">
-                            <h4>مؤشر الكثافة (Density)</h4>
-                            <div class="{density_color}">{density}%</div>
-                            <div class="{status_class}">{density_status}</div>
-                        </div>
-                    ''', unsafe_allow_html=True)
-                    
-                with c2:
-                    st.markdown(f'''
-                        <div class="custom-card">
-                            <h4>توزيع الفئات (استنتاج لوني)</h4>
-                            <div class="value-white">⚪ {men}% إحرام</div>
-                            <div class="value-blue">⚫ {women}% عباءات</div>
-                        </div>
-                    ''', unsafe_allow_html=True)
-                    
-                with c3:
-                    action_title = "⚠️ يتطلب تدخل" if density > 75 else "✅ الوضع آمن"
-                    action_color = "#ff4b4b" if density > 75 else "#00fa9a"
-                    action_desc = "توجيه المعتمرين لأدوار التوسعة فوراً." if density > 75 else "لا يوجد إجراء مطلوب حالياً."
-                    
-                    st.markdown(f'''
-                        <div class="custom-card">
-                            <h4>توصية النظام الآلية</h4>
-                            <div style="color: {action_color}; font-size: 1.8rem; font-weight: bold; margin: 10px 0;">{action_title}</div>
-                            <div style="color: #aaa; font-size: 0.95rem;">{action_desc}</div>
-                        </div>
-                    ''', unsafe_allow_html=True)
+                c1, c2, c3, c4 = st.columns(4)
+                c1.markdown(f'<div class="metric-box"><div class="metric-title">مؤشر الكثافة</div><div class="metric-val" style="color:{"#ff4b4b" if density > 70 else "#00fa9a"}">{density}%</div></div>', unsafe_allow_html=True)
+                c2.markdown(f'<div class="metric-box"><div class="metric-title">الأشخاص المرصودين</div><div class="metric-val" style="color:#fff">{total_ppl}</div></div>', unsafe_allow_html=True)
+                c3.markdown(f'<div class="metric-box"><div class="metric-title">رجال (إحرام)</div><div class="metric-val" style="color:#fff">{men_r}%</div></div>', unsafe_allow_html=True)
+                c4.markdown(f'<div class="metric-box"><div class="metric-title">نساء (عباءات)</div><div class="metric-val" style="color:#4da6ff">{women_r}%</div></div>', unsafe_allow_html=True)
 
-elif source_type in ["فيديو مسجل", "يوتيوب مباشر"]:
-    st.info("قمنا بتعطيل هذا القسم مؤقتاً لنركز على اختبار الخوارزمية على الصور أولاً.")
+elif source_type == "فيديو مسجل":
+    st.info("تم فتح القسم! يمكنك رفع فيديو قصير، ولكن معالجة الفيديو إطاراً بإطار تتطلب وقت حوسبة طويل على المتصفح.")
+    uploaded_video = st.file_uploader("📂 ارفع مقطع فيديو (MP4)...", type=["mp4"])
+    if uploaded_video:
+        st.video(uploaded_video)
+
+elif source_type == "يوتيوب مباشر":
+    st.info("القسم مفتوح. أضف رابط البث:")
+    youtube_url = st.text_input("🔗 رابط YouTube:")
+    if youtube_url:
+        st.video(youtube_url)
