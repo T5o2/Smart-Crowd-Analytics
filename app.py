@@ -15,10 +15,10 @@ def get_b64(bin_file):
     except FileNotFoundError:
         return ""
 
-safe_bg = get_b64("~.jpg")
-alert_bg = get_b64("~~.jpg")
-men_bg = get_b64("~~~.jpg")
-women_bg = get_b64("~~~~.jpg")
+safe_bg = get_b64("~~~.jpg")
+alert_bg = get_b64("~~~~.jpg")
+men_bg = get_b64("~.jpg")
+women_bg = get_b64("~~.jpg")
 
 st.markdown("""
 <style>
