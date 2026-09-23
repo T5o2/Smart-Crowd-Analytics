@@ -88,26 +88,22 @@ st.markdown("""
 
 def analyze_pixels(frame):
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     
-    lower_white = np.array([0, 0, 160])
+    lower_white = np.array([0, 0, 195])
     upper_white = np.array([180, 40, 255])
     
     lower_dark = np.array([0, 0, 0])
-    upper_dark = np.array([180, 255, 55])
+    upper_dark = np.array([180, 255, 60])
     
     mask_white = cv2.inRange(hsv, lower_white, upper_white)
     mask_dark = cv2.inRange(hsv, lower_dark, upper_dark)
     
-    edges = cv2.Canny(gray, 40, 120)
-    kernel = np.ones((5,5), np.uint8)
-    edges_dilated = cv2.dilate(edges, kernel, iterations=1)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    mask_white_clean = cv2.morphologyEx(mask_white, cv2.MORPH_OPEN, kernel, iterations=1)
+    mask_dark_clean = cv2.morphologyEx(mask_dark, cv2.MORPH_OPEN, kernel, iterations=1)
     
-    valid_white = cv2.bitwise_and(mask_white, edges_dilated)
-    valid_dark = cv2.bitwise_and(mask_dark, edges_dilated)
-    
-    contours_w, _ = cv2.findContours(valid_white, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    contours_d, _ = cv2.findContours(valid_dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours_w, _ = cv2.findContours(mask_white_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours_d, _ = cv2.findContours(mask_dark_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     final_w = np.zeros_like(mask_white)
     final_d = np.zeros_like(mask_dark)
@@ -119,17 +115,23 @@ def analyze_pixels(frame):
     
     for cnt in contours_w:
         area = cv2.contourArea(cnt)
-        if 5 < area < max_area:
+        x, y, w, h = cv2.boundingRect(cnt)
+        aspect_ratio = float(w)/h if h > 0 else 0
+        
+        if 8 < area < max_area and 0.2 < aspect_ratio < 5.0:
             cv2.drawContours(final_w, [cnt], -1, 255, -1)
             w_px += area
             
     for cnt in contours_d:
         area = cv2.contourArea(cnt)
-        if 5 < area < max_area:
+        x, y, w, h = cv2.boundingRect(cnt)
+        aspect_ratio = float(w)/h if h > 0 else 0
+        
+        if 8 < area < max_area and 0.2 < aspect_ratio < 5.0:
             cv2.drawContours(final_d, [cnt], -1, 255, -1)
             d_px += area
             
-    roi_limit = total_px * 0.12 
+    roi_limit = total_px * 0.10
     total_crowd = w_px + d_px
     
     density = min(int((total_crowd / roi_limit) * 100), 100)
