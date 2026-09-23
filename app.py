@@ -25,9 +25,8 @@ st.markdown("""
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} [data-testid="stHeader"] {visibility: hidden;}
     .block-container { padding-top: 1rem !important; }
     
-    /* 1. تصغير الصور بشكل احترافي */
     .stImage > img {
-        max-height: 260px; /* تم التصغير من 400 إلى 260 */
+        max-height: 260px; 
         object-fit: contain;
         border-radius: 10px;
         border: 1px solid #333;
@@ -53,7 +52,7 @@ st.markdown("""
         content: "";
         position: absolute;
         top: 0; left: 0; right: 0; bottom: 0;
-        background: rgba(0, 0, 0, 0.75); /* تعميق الظل قليلاً لإبراز الأرقام */
+        background: rgba(0, 0, 0, 0.75); 
         z-index: 1;
     }
     .metric-content {
@@ -61,19 +60,16 @@ st.markdown("""
         z-index: 2;
     }
     
-    /* تغيير الخط الأساسي بخط عصري */
     .metric-title { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 1.1rem; font-weight: 600; margin-bottom: 5px; color: #ddd; }
     
-    /* 2. تأثير الشفافية الاحترافي للأرقام (Glassmorphism & Glow) */
     .metric-val { 
         font-family: system-ui, -apple-system, sans-serif;
         font-size: 3rem; 
         font-weight: 900; 
-        opacity: 0.85; /* الشفافية المطلوبة */
-        text-shadow: 0px 5px 15px rgba(0, 0, 0, 0.9), 0 0 12px currentColor; /* توهج ذكي بنفس لون النص */
+        opacity: 0.85; 
+        text-shadow: 0px 5px 15px rgba(0, 0, 0, 0.9), 0 0 12px currentColor; 
     }
     
-    /* 3. الفاصل الاحترافي (خط متدرج ومضيء) */
     .divider-container {
         display: flex;
         justify-content: center;
@@ -83,7 +79,7 @@ st.markdown("""
     .divider-line {
         width: 3px;
         height: 70%;
-        background: linear-gradient(to bottom, transparent, #d4af37, transparent); /* تدرج ذهبي */
+        background: linear-gradient(to bottom, transparent, #d4af37, transparent); 
         box-shadow: 0 0 10px rgba(212, 175, 55, 0.8);
         border-radius: 2px;
     }
@@ -92,6 +88,7 @@ st.markdown("""
 
 def analyze_pixels(frame):
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     
     lower_white = np.array([0, 0, 160])
     upper_white = np.array([180, 40, 255])
@@ -102,12 +99,37 @@ def analyze_pixels(frame):
     mask_white = cv2.inRange(hsv, lower_white, upper_white)
     mask_dark = cv2.inRange(hsv, lower_dark, upper_dark)
     
-    w_px = cv2.countNonZero(mask_white)
-    d_px = cv2.countNonZero(mask_dark)
+    edges = cv2.Canny(gray, 40, 120)
+    kernel = np.ones((5,5), np.uint8)
+    edges_dilated = cv2.dilate(edges, kernel, iterations=1)
+    
+    valid_white = cv2.bitwise_and(mask_white, edges_dilated)
+    valid_dark = cv2.bitwise_and(mask_dark, edges_dilated)
+    
+    contours_w, _ = cv2.findContours(valid_white, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours_d, _ = cv2.findContours(valid_dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    final_w = np.zeros_like(mask_white)
+    final_d = np.zeros_like(mask_dark)
     
     total_px = frame.shape[0] * frame.shape[1]
+    max_area = total_px * 0.015
     
-    roi_limit = total_px * 0.35
+    w_px, d_px = 0, 0
+    
+    for cnt in contours_w:
+        area = cv2.contourArea(cnt)
+        if 5 < area < max_area:
+            cv2.drawContours(final_w, [cnt], -1, 255, -1)
+            w_px += area
+            
+    for cnt in contours_d:
+        area = cv2.contourArea(cnt)
+        if 5 < area < max_area:
+            cv2.drawContours(final_d, [cnt], -1, 255, -1)
+            d_px += area
+            
+    roi_limit = total_px * 0.12 
     total_crowd = w_px + d_px
     
     density = min(int((total_crowd / roi_limit) * 100), 100)
@@ -120,8 +142,8 @@ def analyze_pixels(frame):
         m_r, w_r = 0, 0
         
     overlay = frame.copy()
-    overlay[mask_white > 0] = [255, 255, 255]
-    overlay[mask_dark > 0] = [255, 0, 255]
+    overlay[final_w > 0] = [255, 255, 255]
+    overlay[final_d > 0] = [255, 0, 255]
     
     res = cv2.addWeighted(frame, 0.7, overlay, 0.3, 0)
     
