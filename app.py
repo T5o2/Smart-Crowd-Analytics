@@ -138,10 +138,10 @@ def generate_card(bg_img, title, val, color):
     '''
 
 def update_ui(density, empty, m_r, w_r, placeholders):
-    card_red = generate_card(alert_bg, "نسبة الازدحام", density, "#ff4b4b")
-    card_green = generate_card(safe_bg, "نسبة الفضاوة", empty, "#00fa9a")
-    card_men = generate_card(men_bg, "نسبة الرجال", m_r, "#ffffff")
-    card_women = generate_card(women_bg, "نسبة النساء", w_r, "#696969")
+    card_red = generate_card(alert_bg, " مزدحم ", density, "#ff4b4b")
+    card_green = generate_card(safe_bg, " فاضي ", empty, "#00fa9a")
+    card_men = generate_card(men_bg, " الرجال ", m_r, "#ffffff")
+    card_women = generate_card(women_bg, " النساء ", w_r, "#696969")
     
     if density >= empty:
         box1, box2 = card_red, card_green
