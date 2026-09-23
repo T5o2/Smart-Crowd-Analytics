@@ -113,24 +113,21 @@ def analyze_pixels(frame):
     density = min(int((total_crowd / roi_limit) * 100), 100)
     empty = 100 - density
     
-def update_ui(density, empty, m_r, w_r, placeholders):  
-    card_red = generate_card(alert_bg, "نسبة الازدحام", density, "#ff4b4b")
-    card_green = generate_card(safe_bg, "نسبة الفضاوة", empty, "#00fa9a")
-    card_men = generate_card(men_bg, "نسبة الرجال", m_r, "#ffffff")
-    card_women = generate_card(women_bg, "نسبة النساء", w_r, "#c0c0c0") # اللون الرمادي الفضي
-    
-    if density >= empty:
-        box1, box2 = card_red, card_green
+    if total_crowd > 0:
+        m_r = int((w_px / total_crowd) * 100)
+        w_r = 100 - m_r
     else:
-        box1, box2 = card_green, card_red
+        m_r, w_r = 0, 0
+        
+    overlay = frame.copy()
+    overlay[mask_white > 0] = [255, 255, 255]
+    overlay[mask_dark > 0] = [255, 0, 255]
+    
+    res = cv2.addWeighted(frame, 0.7, overlay, 0.3, 0)
+    
+    return cv2.cvtColor(res, cv2.COLOR_BGR2RGB), density, empty, m_r, w_r
 
-    placeholders[0].markdown(box1, unsafe_allow_html=True)
-    placeholders[1].markdown(box2, unsafe_allow_html=True)
-    
-    placeholders[2].markdown('<div class="divider-container"><div class="divider-line"></div></div>', unsafe_allow_html=True)
-    
-    placeholders[3].markdown(card_men, unsafe_allow_html=True)
-    placeholders[4].markdown(card_women, unsafe_allow_html=True)
+def generate_card(bg_img, title, val, color):
     return f'''
     <div class="metric-card" style="background-image: url('data:image/jpeg;base64,{bg_img}'); border-color: {color};">
         <div class="metric-content">
@@ -144,7 +141,7 @@ def update_ui(density, empty, m_r, w_r, placeholders):
     card_red = generate_card(alert_bg, "نسبة الازدحام", density, "#ff4b4b")
     card_green = generate_card(safe_bg, "نسبة الفضاوة", empty, "#00fa9a")
     card_men = generate_card(men_bg, "نسبة الرجال", m_r, "#ffffff")
-    card_women = generate_card(women_bg, "نسبة النساء", w_r, "#4da6ff")
+    card_women = generate_card(women_bg, "نسبة النساء", w_r, "#c0c0c0") # اللون الرمادي الفضي
     
     if density >= empty:
         box1, box2 = card_red, card_green
@@ -153,7 +150,7 @@ def update_ui(density, empty, m_r, w_r, placeholders):
 
     placeholders[0].markdown(box1, unsafe_allow_html=True)
     placeholders[1].markdown(box2, unsafe_allow_html=True)
-    placeholders[2].markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    placeholders[2].markdown('<div class="divider-container"><div class="divider-line"></div></div>', unsafe_allow_html=True)
     placeholders[3].markdown(card_men, unsafe_allow_html=True)
     placeholders[4].markdown(card_women, unsafe_allow_html=True)
 
