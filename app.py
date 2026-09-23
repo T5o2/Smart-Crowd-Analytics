@@ -113,7 +113,7 @@ def analyze_pixels(frame):
     density = min(int((total_crowd / roi_limit) * 100), 100)
     empty = 100 - density
     
-   def update_ui(density, empty, m_r, w_r, placeholders):
+def update_ui(density, empty, m_r, w_r, placeholders):
        
     card_red = generate_card(alert_bg, "نسبة الازدحام", density, "#ff4b4b")
     card_green = generate_card(safe_bg, "نسبة الفضاوة", empty, "#00fa9a")
