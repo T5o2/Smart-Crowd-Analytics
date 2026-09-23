@@ -25,8 +25,9 @@ st.markdown("""
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} [data-testid="stHeader"] {visibility: hidden;}
     .block-container { padding-top: 1rem !important; }
     
+    /* 1. تصغير الصور بشكل احترافي */
     .stImage > img {
-        max-height: 400px;
+        max-height: 260px; /* تم التصغير من 400 إلى 260 */
         object-fit: contain;
         border-radius: 10px;
         border: 1px solid #333;
@@ -52,20 +53,39 @@ st.markdown("""
         content: "";
         position: absolute;
         top: 0; left: 0; right: 0; bottom: 0;
-        background: rgba(0, 0, 0, 0.7);
+        background: rgba(0, 0, 0, 0.75); /* تعميق الظل قليلاً لإبراز الأرقام */
         z-index: 1;
     }
     .metric-content {
         position: relative;
         z-index: 2;
     }
-    .metric-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 5px; color: #ddd; }
-    .metric-val { font-size: 2.8rem; font-weight: bold; text-shadow: 2px 2px 4px rgba(0,0,0,0.9); }
     
-    .divider {
-        border-left: 2px solid #444;
+    /* تغيير الخط الأساسي بخط عصري */
+    .metric-title { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 1.1rem; font-weight: 600; margin-bottom: 5px; color: #ddd; }
+    
+    /* 2. تأثير الشفافية الاحترافي للأرقام (Glassmorphism & Glow) */
+    .metric-val { 
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 3rem; 
+        font-weight: 900; 
+        opacity: 0.85; /* الشفافية المطلوبة */
+        text-shadow: 0px 5px 15px rgba(0, 0, 0, 0.9), 0 0 12px currentColor; /* توهج ذكي بنفس لون النص */
+    }
+    
+    /* 3. الفاصل الاحترافي (خط متدرج ومضيء) */
+    .divider-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
         height: 160px;
-        margin: 0 auto;
+    }
+    .divider-line {
+        width: 3px;
+        height: 70%;
+        background: linear-gradient(to bottom, transparent, #d4af37, transparent); /* تدرج ذهبي */
+        box-shadow: 0 0 10px rgba(212, 175, 55, 0.8);
+        border-radius: 2px;
     }
 </style>
 """, unsafe_allow_html=True)
