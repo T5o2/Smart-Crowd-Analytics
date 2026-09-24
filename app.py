@@ -103,11 +103,11 @@ def analyze_pixels(frame):
     
     advanced_mask = cv2.bitwise_and(spatial_mask, texture_mask)
     
-    lower_white = np.array([0, 0, 200])
+    lower_white = np.array([0, 0, 180])
     upper_white = np.array([180, 40, 255])
     
     lower_dark = np.array([0, 0, 0])
-    upper_dark = np.array([180, 255, 50])
+    upper_dark = np.array([180, 255, 90])
     
     mask_white = cv2.inRange(hsv, lower_white, upper_white)
     mask_dark = cv2.inRange(hsv, lower_dark, upper_dark)
@@ -119,50 +119,25 @@ def analyze_pixels(frame):
     valid_white = cv2.morphologyEx(valid_white, cv2.MORPH_OPEN, kernel, iterations=1)
     valid_dark = cv2.morphologyEx(valid_dark, cv2.MORPH_OPEN, kernel, iterations=1)
     
-    contours_w, _ = cv2.findContours(valid_white, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    contours_d, _ = cv2.findContours(valid_dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    final_w = np.zeros_like(mask_white)
-    final_d = np.zeros_like(mask_dark)
+    w_px = cv2.countNonZero(valid_white)
+    d_px = cv2.countNonZero(valid_dark)
     
     total_px = h * w
-    max_area = total_px * 0.01
-    
-    w_px, d_px = 0, 0
-    
-    for cnt in contours_w:
-        area = cv2.contourArea(cnt)
-        cx, cy, cw, ch = cv2.boundingRect(cnt)
-        aspect_ratio = float(cw)/ch if ch > 0 else 0
-        
-        if 45 < area < max_area and 0.3 < aspect_ratio < 3.0:
-            cv2.drawContours(final_w, [cnt], -1, 255, -1)
-            w_px += area
-            
-    for cnt in contours_d:
-        area = cv2.contourArea(cnt)
-        cx, cy, cw, ch = cv2.boundingRect(cnt)
-        aspect_ratio = float(cw)/ch if ch > 0 else 0
-        
-        if 45 < area < max_area and 0.3 < aspect_ratio < 3.0:
-            cv2.drawContours(final_d, [cnt], -1, 255, -1)
-            d_px += area
-            
-    roi_limit = total_px * 0.20
+    roi_limit = total_px * 0.25
     total_crowd = w_px + d_px
     
     density = min(int((total_crowd / roi_limit) * 100), 100)
     empty = 100 - density
     
-    if total_crowd > 0:
+    if density > 3 and total_crowd > 0:
         m_r = int((w_px / total_crowd) * 100)
         w_r = 100 - m_r
     else:
         m_r, w_r = 0, 0
         
     overlay = frame.copy()
-    overlay[final_w > 0] = [255, 255, 255]
-    overlay[final_d > 0] = [255, 0, 255]
+    overlay[valid_white > 0] = [255, 255, 255]
+    overlay[valid_dark > 0] = [255, 0, 255]
     
     res = cv2.addWeighted(frame, 0.7, overlay, 0.3, 0)
     
