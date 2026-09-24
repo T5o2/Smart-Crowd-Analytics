@@ -5,15 +5,8 @@ from PIL import Image
 import tempfile
 import base64
 import yt_dlp
-from ultralytics import YOLO
 
 st.set_page_config(page_title="أرصاد الحشود | Crowd Analytics", page_icon="🕋", layout="wide")
-
-@st.cache_resource
-def load_ai_model():
-    return YOLO('yolov8n.pt')
-
-ai_model = load_ai_model()
 
 def get_b64(bin_file):
     try:
@@ -95,46 +88,70 @@ st.markdown("""
 
 def analyze_pixels(frame):
     h, w = frame.shape[:2]
+    total_px = h * w
     
-    results = ai_model(frame, classes=[0], conf=0.15, verbose=False)
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     
-    w_count = 0
-    d_count = 0
-    
-    overlay = frame.copy()
-    
-    for box in results[0].boxes:
-        x1, y1, x2, y2 = map(int, box.xyxy[0])
-        
-        person_crop = frame[y1:y2, x1:x2]
-        if person_crop.size == 0:
-            continue
+    row_sums = np.sum(gray > 140, axis=1)
+    cutoff_y = 0
+    for i in range(h):
+        if row_sums[i] > (w * 0.15):
+            cutoff_y = max(0, i - int(h * 0.05))
+            break
             
-        hsv_crop = cv2.cvtColor(person_crop, cv2.COLOR_BGR2HSV)
-        v_channel = hsv_crop[:, :, 2]
-        
-        avg_brightness = np.mean(v_channel)
-        
-        if avg_brightness > 120:
-            w_count += 1
-            cv2.rectangle(overlay, (x1, y1), (x2, y2), (255, 255, 255), 2)
-        else:
-            d_count += 1
-            cv2.rectangle(overlay, (x1, y1), (x2, y2), (255, 0, 255), 2)
-            
-    total_people = w_count + d_count
+    blurred = cv2.GaussianBlur(gray, (55, 55), 0)
+    _, dark_regions = cv2.threshold(blurred, 90, 255, cv2.THRESH_BINARY_INV)
     
-    estimated_max_capacity = (w * h) / 1000 
-    density = min(int((total_people / estimated_max_capacity) * 100), 100)
+    contours_ex, _ = cv2.findContours(dark_regions, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    exclusion_mask = np.zeros((h, w), dtype=np.uint8)
+    
+    for cnt in contours_ex:
+        if cv2.contourArea(cnt) > (total_px * 0.015):
+            cv2.drawContours(exclusion_mask, [cnt], -1, 255, -1)
+            
+    kernel_ex = np.ones((max(25, int(w * 0.04)), max(25, int(w * 0.04))), np.uint8)
+    exclusion_mask = cv2.dilate(exclusion_mask, kernel_ex, iterations=2)
+    
+    exclusion_mask[:cutoff_y, :] = 255
+    
+    lower_white = np.array([0, 0, 150])
+    upper_white = np.array([180, 50, 255])
+    lower_dark = np.array([0, 0, 0])
+    upper_dark = np.array([180, 255, 80])
+    
+    mask_white = cv2.inRange(hsv, lower_white, upper_white)
+    mask_dark = cv2.inRange(hsv, lower_dark, upper_dark)
+    
+    mask_white = cv2.bitwise_and(mask_white, cv2.bitwise_not(exclusion_mask))
+    mask_dark = cv2.bitwise_and(mask_dark, cv2.bitwise_not(exclusion_mask))
+    
+    kernel_clean = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    mask_white = cv2.morphologyEx(mask_white, cv2.MORPH_OPEN, kernel_clean)
+    mask_dark = cv2.morphologyEx(mask_dark, cv2.MORPH_OPEN, kernel_clean)
+    
+    w_px = cv2.countNonZero(mask_white)
+    d_px = cv2.countNonZero(mask_dark)
+    total_crowd = w_px + d_px
+    
+    visible_area = total_px - cv2.countNonZero(exclusion_mask)
+    roi_limit = max(visible_area * 0.45, total_px * 0.1) 
+    
+    density = min(int((total_crowd / roi_limit) * 100), 100)
     empty = 100 - density
     
-    if total_people > 0:
-        m_r = int((w_count / total_people) * 100)
+    if density > 1 and total_crowd > 0:
+        m_r = int((w_px / total_crowd) * 100)
         w_r = 100 - m_r
     else:
         m_r, w_r = 0, 0
         
-    res = cv2.addWeighted(frame, 0.6, overlay, 0.4, 0)
+    overlay = frame.copy()
+    overlay[mask_white > 0] = [255, 255, 255]
+    overlay[mask_dark > 0] = [255, 0, 255]
+    overlay[exclusion_mask > 0] = [0, 0, 0] 
+    
+    res = cv2.addWeighted(frame, 0.7, overlay, 0.3, 0)
     
     return cv2.cvtColor(res, cv2.COLOR_BGR2RGB), density, empty, m_r, w_r
 
