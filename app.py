@@ -90,75 +90,94 @@ def analyze_pixels(frame):
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     h, w = frame.shape[:2]
     total_px = h * w
-    
+
+    base_scale = max(1, int(w / 600))
+    giant_size = max(15, int(w / 30))
+
     lower_white = np.array([0, 0, 160])
     upper_white = np.array([180, 50, 255])
-    
     lower_dark = np.array([0, 0, 0])
     upper_dark = np.array([180, 255, 75])
-    
+
     mask_white = cv2.inRange(hsv, lower_white, upper_white)
     mask_dark = cv2.inRange(hsv, lower_dark, upper_dark)
+
+    kernel_giant = cv2.getStructuringElement(cv2.MORPH_RECT, (giant_size, giant_size))
+    dark_closed = cv2.morphologyEx(mask_dark, cv2.MORPH_CLOSE, kernel_giant)
     
-    row_sums = np.sum(mask_white, axis=1) / 255
-    cutoff_y = 0
-    for i in range(h):
-        if row_sums[i] > (w * 0.05):
-            cutoff_y = max(0, i - 15)
-            break
+    contours_ex, _ = cv2.findContours(dark_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    exclusion_mask = np.zeros((h, w), dtype=np.uint8)
+    
+    for cnt in contours_ex:
+        if cv2.contourArea(cnt) > (total_px * 0.008):
+            cv2.drawContours(exclusion_mask, [cnt], -1, 255, -1)
             
-    mask_white[:cutoff_y, :] = 0
-    mask_dark[:cutoff_y, :] = 0
-    
-    kernel_blob = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    mask_white = cv2.morphologyEx(mask_white, cv2.MORPH_OPEN, kernel_blob, iterations=1)
-    mask_dark = cv2.morphologyEx(mask_dark, cv2.MORPH_OPEN, kernel_blob, iterations=2)
-    
-    kernel_connect = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
-    mask_white = cv2.morphologyEx(mask_white, cv2.MORPH_CLOSE, kernel_connect, iterations=2)
-    mask_dark = cv2.morphologyEx(mask_dark, cv2.MORPH_CLOSE, kernel_connect, iterations=2)
-    
+    kernel_ex_dilate = np.ones((giant_size, giant_size), np.uint8)
+    exclusion_mask = cv2.dilate(exclusion_mask, kernel_ex_dilate, iterations=1)
+
+    mask_white = cv2.bitwise_and(mask_white, cv2.bitwise_not(exclusion_mask))
+    mask_dark = cv2.bitwise_and(mask_dark, cv2.bitwise_not(exclusion_mask))
+
+    clean_sz = max(1, base_scale)
+    merge_sz = max(3, base_scale * 3)
+    kernel_clean = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (clean_sz, clean_sz))
+    kernel_merge = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (merge_sz, merge_sz))
+
+    mask_white = cv2.morphologyEx(mask_white, cv2.MORPH_OPEN, kernel_clean)
+    mask_dark = cv2.morphologyEx(mask_dark, cv2.MORPH_OPEN, kernel_clean)
+    mask_white = cv2.morphologyEx(mask_white, cv2.MORPH_CLOSE, kernel_merge)
+    mask_dark = cv2.morphologyEx(mask_dark, cv2.MORPH_CLOSE, kernel_merge)
+
     contours_w, _ = cv2.findContours(mask_white, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     contours_d, _ = cv2.findContours(mask_dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
+
+    areas_w = [cv2.contourArea(c) for c in contours_w if cv2.contourArea(c) > 0]
+    areas_d = [cv2.contourArea(c) for c in contours_d if cv2.contourArea(c) > 0]
+    all_areas = areas_w + areas_d
+
+    if len(all_areas) > 0:
+        median_area = np.median(all_areas)
+        dynamic_min_area = max(2.0, median_area * 0.15)
+    else:
+        dynamic_min_area = 2.0
+
     final_w = np.zeros_like(mask_white)
     final_d = np.zeros_like(mask_dark)
-    
+
     w_px, d_px = 0, 0
-    max_dark_area = total_px * 0.04
-    
+
     for cnt in contours_w:
         area = cv2.contourArea(cnt)
-        if area > 30:
+        if area >= dynamic_min_area:
             cv2.drawContours(final_w, [cnt], -1, 255, -1)
             w_px += area
-            
+
     for cnt in contours_d:
         area = cv2.contourArea(cnt)
-        if 30 < area < max_dark_area:
+        if area >= dynamic_min_area:
             cv2.drawContours(final_d, [cnt], -1, 255, -1)
             d_px += area
-            
-    visible_area = (h - cutoff_y) * w
-    roi_limit = visible_area * 0.35
-    
+
+    excluded_px = cv2.countNonZero(exclusion_mask)
+    visible_area = total_px - excluded_px
+    roi_limit = max(visible_area * 0.35, total_px * 0.1)
+
     total_crowd = w_px + d_px
-    
     density = min(int((total_crowd / roi_limit) * 100), 100)
     empty = 100 - density
-    
-    if density > 3 and total_crowd > 0:
+
+    if density > 2 and total_crowd > 0:
         m_r = int((w_px / total_crowd) * 100)
         w_r = 100 - m_r
     else:
         m_r, w_r = 0, 0
-        
+
     overlay = frame.copy()
     overlay[final_w > 0] = [255, 255, 255]
     overlay[final_d > 0] = [255, 0, 255]
-    
+
     res = cv2.addWeighted(frame, 0.7, overlay, 0.3, 0)
-    
+
     return cv2.cvtColor(res, cv2.COLOR_BGR2RGB), density, empty, m_r, w_r
 
 def generate_card(bg_img, title, val, color):
