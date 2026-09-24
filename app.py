@@ -88,50 +88,67 @@ st.markdown("""
 
 def analyze_pixels(frame):
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     
-    lower_white = np.array([0, 0, 195])
+    h, w = frame.shape[:2]
+    
+    spatial_mask = np.ones((h, w), dtype=np.uint8) * 255
+    cv2.ellipse(spatial_mask, (w//2, h//2), (int(w*0.12), int(h*0.15)), 0, 0, 360, 0, -1)
+    
+    sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+    sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+    magnitude = cv2.magnitude(sobelx, sobely)
+    magnitude = cv2.convertScaleAbs(magnitude)
+    texture_mask = cv2.inRange(magnitude, 40, 255)
+    
+    advanced_mask = cv2.bitwise_and(spatial_mask, texture_mask)
+    
+    lower_white = np.array([0, 0, 200])
     upper_white = np.array([180, 40, 255])
     
     lower_dark = np.array([0, 0, 0])
-    upper_dark = np.array([180, 255, 60])
+    upper_dark = np.array([180, 255, 50])
     
     mask_white = cv2.inRange(hsv, lower_white, upper_white)
     mask_dark = cv2.inRange(hsv, lower_dark, upper_dark)
     
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    mask_white_clean = cv2.morphologyEx(mask_white, cv2.MORPH_OPEN, kernel, iterations=1)
-    mask_dark_clean = cv2.morphologyEx(mask_dark, cv2.MORPH_OPEN, kernel, iterations=1)
+    valid_white = cv2.bitwise_and(mask_white, advanced_mask)
+    valid_dark = cv2.bitwise_and(mask_dark, advanced_mask)
     
-    contours_w, _ = cv2.findContours(mask_white_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    contours_d, _ = cv2.findContours(mask_dark_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    valid_white = cv2.morphologyEx(valid_white, cv2.MORPH_OPEN, kernel, iterations=1)
+    valid_dark = cv2.morphologyEx(valid_dark, cv2.MORPH_OPEN, kernel, iterations=1)
+    
+    contours_w, _ = cv2.findContours(valid_white, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours_d, _ = cv2.findContours(valid_dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     final_w = np.zeros_like(mask_white)
     final_d = np.zeros_like(mask_dark)
     
-    total_px = frame.shape[0] * frame.shape[1]
-    max_area = total_px * 0.015
+    total_px = h * w
+    max_area = total_px * 0.01
     
     w_px, d_px = 0, 0
     
     for cnt in contours_w:
         area = cv2.contourArea(cnt)
-        x, y, w, h = cv2.boundingRect(cnt)
-        aspect_ratio = float(w)/h if h > 0 else 0
+        cx, cy, cw, ch = cv2.boundingRect(cnt)
+        aspect_ratio = float(cw)/ch if ch > 0 else 0
         
-        if 8 < area < max_area and 0.2 < aspect_ratio < 5.0:
+        if 15 < area < max_area and 0.3 < aspect_ratio < 3.0:
             cv2.drawContours(final_w, [cnt], -1, 255, -1)
             w_px += area
             
     for cnt in contours_d:
         area = cv2.contourArea(cnt)
-        x, y, w, h = cv2.boundingRect(cnt)
-        aspect_ratio = float(w)/h if h > 0 else 0
+        cx, cy, cw, ch = cv2.boundingRect(cnt)
+        aspect_ratio = float(cw)/ch if ch > 0 else 0
         
-        if 8 < area < max_area and 0.2 < aspect_ratio < 5.0:
+        if 15 < area < max_area and 0.3 < aspect_ratio < 3.0:
             cv2.drawContours(final_d, [cnt], -1, 255, -1)
             d_px += area
             
-    roi_limit = total_px * 0.10
+    roi_limit = total_px * 0.12
     total_crowd = w_px + d_px
     
     density = min(int((total_crowd / roi_limit) * 100), 100)
