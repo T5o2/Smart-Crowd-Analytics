@@ -91,18 +91,32 @@ def analyze_pixels(frame):
     h, w = frame.shape[:2]
     total_px = h * w
     
-    lower_white = np.array([0, 0, 170])
+    lower_white = np.array([0, 0, 160])
     upper_white = np.array([180, 50, 255])
     
     lower_dark = np.array([0, 0, 0])
-    upper_dark = np.array([180, 255, 80])
+    upper_dark = np.array([180, 255, 75])
     
     mask_white = cv2.inRange(hsv, lower_white, upper_white)
     mask_dark = cv2.inRange(hsv, lower_dark, upper_dark)
     
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-    mask_white = cv2.morphologyEx(mask_white, cv2.MORPH_CLOSE, kernel, iterations=2)
-    mask_dark = cv2.morphologyEx(mask_dark, cv2.MORPH_CLOSE, kernel, iterations=2)
+    row_sums = np.sum(mask_white, axis=1) / 255
+    cutoff_y = 0
+    for i in range(h):
+        if row_sums[i] > (w * 0.05):
+            cutoff_y = max(0, i - 15)
+            break
+            
+    mask_white[:cutoff_y, :] = 0
+    mask_dark[:cutoff_y, :] = 0
+    
+    kernel_blob = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    mask_white = cv2.morphologyEx(mask_white, cv2.MORPH_OPEN, kernel_blob, iterations=1)
+    mask_dark = cv2.morphologyEx(mask_dark, cv2.MORPH_OPEN, kernel_blob, iterations=2)
+    
+    kernel_connect = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+    mask_white = cv2.morphologyEx(mask_white, cv2.MORPH_CLOSE, kernel_connect, iterations=2)
+    mask_dark = cv2.morphologyEx(mask_dark, cv2.MORPH_CLOSE, kernel_connect, iterations=2)
     
     contours_w, _ = cv2.findContours(mask_white, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     contours_d, _ = cv2.findContours(mask_dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -111,44 +125,29 @@ def analyze_pixels(frame):
     final_d = np.zeros_like(mask_dark)
     
     w_px, d_px = 0, 0
-    max_object_area = total_px * 0.04
-    min_object_area = 20
-    
-    min_x, min_y, max_x, max_y = w, h, 0, 0
-    valid_found = False
+    max_dark_area = total_px * 0.04
     
     for cnt in contours_w:
         area = cv2.contourArea(cnt)
-        if min_object_area < area < max_object_area:
+        if area > 30:
             cv2.drawContours(final_w, [cnt], -1, 255, -1)
             w_px += area
-            x, y, bw, bh = cv2.boundingRect(cnt)
-            min_x, min_y = min(min_x, x), min(min_y, y)
-            max_x, max_y = max(max_x, x + bw), max(max_y, y + bh)
-            valid_found = True
             
     for cnt in contours_d:
         area = cv2.contourArea(cnt)
-        if min_object_area < area < max_object_area:
+        if 30 < area < max_dark_area:
             cv2.drawContours(final_d, [cnt], -1, 255, -1)
             d_px += area
-            x, y, bw, bh = cv2.boundingRect(cnt)
-            min_x, min_y = min(min_x, x), min(min_y, y)
-            max_x, max_y = max(max_x, x + bw), max(max_y, y + bh)
-            valid_found = True
             
+    visible_area = (h - cutoff_y) * w
+    roi_limit = visible_area * 0.35
+    
     total_crowd = w_px + d_px
     
-    if valid_found:
-        dynamic_roi_area = (max_x - min_x) * (max_y - min_y)
-        roi_limit = max(dynamic_roi_area * 0.6, total_px * 0.15)
-    else:
-        roi_limit = total_px * 0.15
-        
     density = min(int((total_crowd / roi_limit) * 100), 100)
     empty = 100 - density
     
-    if density > 2 and total_crowd > 0:
+    if density > 3 and total_crowd > 0:
         m_r = int((w_px / total_crowd) * 100)
         w_r = 100 - m_r
     else:
