@@ -89,52 +89,65 @@ st.markdown("""
 def analyze_pixels(frame):
     h, w = frame.shape[:2]
     total_px = h * w
+    
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     
-    v_channel = hsv[:, :, 2]
-    _, dark_mask_initial = cv2.threshold(v_channel, 60, 255, cv2.THRESH_BINARY_INV)
+    row_sums = np.sum(gray > 140, axis=1)
+    cutoff_y = 0
+    for i in range(h):
+        if row_sums[i] > (w * 0.15):
+            cutoff_y = max(0, i - int(h * 0.05))
+            break
+            
+    _, dark_thresh = cv2.threshold(gray, 75, 255, cv2.THRESH_BINARY_INV)
     
-    dark_mask_initial = cv2.morphologyEx(dark_mask_initial, cv2.MORPH_OPEN, np.ones((5,5), np.uint8))
+    kernel_fuse = np.ones((max(5, int(w * 0.02)), max(5, int(w * 0.02))), np.uint8)
+    dark_closed = cv2.morphologyEx(dark_thresh, cv2.MORPH_CLOSE, kernel_fuse)
     
-    contours, _ = cv2.findContours(dark_mask_initial, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours_ex, _ = cv2.findContours(dark_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     exclusion_mask = np.zeros((h, w), dtype=np.uint8)
     
-    for cnt in contours:
+    for cnt in contours_ex:
         area = cv2.contourArea(cnt)
-        if area > (total_px * 0.005):
-            hull = cv2.convexHull(cnt)
-            hull_area = cv2.contourArea(hull)
-            if hull_area > 0:
-                solidity = float(area) / hull_area
-                if solidity > 0.65:
-                    cv2.drawContours(exclusion_mask, [hull], -1, 255, -1)
-                    
-    kernel_dilate = np.ones((int(w * 0.035), int(w * 0.035)), np.uint8)
-    exclusion_mask = cv2.dilate(exclusion_mask, kernel_dilate, iterations=1)
+        if area > (total_px * 0.005): 
+            x, y, bw, bh = cv2.boundingRect(cnt)
+            aspect_ratio = float(bw) / max(bh, 1)
+            
+            if 0.3 < aspect_ratio < 3.5:
+                pad_x = int(bw * 0.15)
+                pad_y = int(bh * 0.15)
+                
+                x1 = max(0, x - pad_x)
+                y1 = max(0, y - pad_y)
+                x2 = min(w, x + bw + pad_x)
+                y2 = min(h, y + bh + pad_y)
+                
+                cv2.rectangle(exclusion_mask, (x1, y1), (x2, y2), 255, -1)
+                
+    exclusion_mask[:cutoff_y, :] = 255
     
     lower_white = np.array([0, 0, 150])
     upper_white = np.array([180, 50, 255])
     lower_dark = np.array([0, 0, 0])
     upper_dark = np.array([180, 255, 80])
     
-    mask_w = cv2.inRange(hsv, lower_white, upper_white)
-    mask_d = cv2.inRange(hsv, lower_dark, upper_dark)
+    mask_white = cv2.inRange(hsv, lower_white, upper_white)
+    mask_dark = cv2.inRange(hsv, lower_dark, upper_dark)
     
-    mask_w[exclusion_mask == 255] = 0
-    mask_d[exclusion_mask == 255] = 0
+    mask_white = cv2.bitwise_and(mask_white, cv2.bitwise_not(exclusion_mask))
+    mask_dark = cv2.bitwise_and(mask_dark, cv2.bitwise_not(exclusion_mask))
     
-    kernel_sz = max(2, int(w * 0.003))
-    kernel_clean = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_sz, kernel_sz))
+    kernel_clean = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    mask_white = cv2.morphologyEx(mask_white, cv2.MORPH_OPEN, kernel_clean)
+    mask_dark = cv2.morphologyEx(mask_dark, cv2.MORPH_OPEN, kernel_clean)
     
-    mask_w = cv2.morphologyEx(mask_w, cv2.MORPH_OPEN, kernel_clean)
-    mask_d = cv2.morphologyEx(mask_d, cv2.MORPH_OPEN, kernel_clean)
-    
-    w_px = cv2.countNonZero(mask_w)
-    d_px = cv2.countNonZero(mask_d)
+    w_px = cv2.countNonZero(mask_white)
+    d_px = cv2.countNonZero(mask_dark)
     total_crowd = w_px + d_px
     
     visible_area = total_px - cv2.countNonZero(exclusion_mask)
-    roi_limit = max(visible_area * 0.40, total_px * 0.1)
+    roi_limit = max(visible_area * 0.45, total_px * 0.1) 
     
     density = min(int((total_crowd / roi_limit) * 100), 100)
     empty = 100 - density
@@ -146,9 +159,9 @@ def analyze_pixels(frame):
         m_r, w_r = 0, 0
         
     overlay = frame.copy()
-    overlay[mask_w > 0] = [255, 255, 255]
-    overlay[mask_d > 0] = [255, 0, 255]
-    overlay[exclusion_mask == 255] = [0, 0, 0]
+    overlay[mask_white > 0] = [255, 255, 255]
+    overlay[mask_dark > 0] = [255, 0, 255]
+    overlay[exclusion_mask > 0] = [0, 0, 0] 
     
     res = cv2.addWeighted(frame, 0.7, overlay, 0.3, 0)
     
