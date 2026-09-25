@@ -100,19 +100,31 @@ def analyze_pixels(frame):
             cutoff_y = max(0, i - int(h * 0.05))
             break
             
-    blurred = cv2.GaussianBlur(gray, (55, 55), 0)
-    _, dark_regions = cv2.threshold(blurred, 90, 255, cv2.THRESH_BINARY_INV)
+    _, dark_thresh = cv2.threshold(gray, 75, 255, cv2.THRESH_BINARY_INV)
     
-    contours_ex, _ = cv2.findContours(dark_regions, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    kernel_fuse = np.ones((max(5, int(w * 0.02)), max(5, int(w * 0.02))), np.uint8)
+    dark_closed = cv2.morphologyEx(dark_thresh, cv2.MORPH_CLOSE, kernel_fuse)
+    
+    contours_ex, _ = cv2.findContours(dark_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     exclusion_mask = np.zeros((h, w), dtype=np.uint8)
     
     for cnt in contours_ex:
-        if cv2.contourArea(cnt) > (total_px * 0.015):
-            cv2.drawContours(exclusion_mask, [cnt], -1, 255, -1)
+        area = cv2.contourArea(cnt)
+        if area > (total_px * 0.005): 
+            x, y, bw, bh = cv2.boundingRect(cnt)
+            aspect_ratio = float(bw) / max(bh, 1)
             
-    kernel_ex = np.ones((max(25, int(w * 0.04)), max(25, int(w * 0.04))), np.uint8)
-    exclusion_mask = cv2.dilate(exclusion_mask, kernel_ex, iterations=2)
-    
+            if 0.3 < aspect_ratio < 3.5:
+                pad_x = int(bw * 0.15)
+                pad_y = int(bh * 0.15)
+                
+                x1 = max(0, x - pad_x)
+                y1 = max(0, y - pad_y)
+                x2 = min(w, x + bw + pad_x)
+                y2 = min(h, y + bh + pad_y)
+                
+                cv2.rectangle(exclusion_mask, (x1, y1), (x2, y2), 255, -1)
+                
     exclusion_mask[:cutoff_y, :] = 255
     
     lower_white = np.array([0, 0, 150])
