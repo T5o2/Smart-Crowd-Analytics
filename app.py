@@ -93,62 +93,68 @@ def analyze_pixels(frame):
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     
+    exclusion_mask = np.zeros((h, w), dtype=np.uint8)
+    
     row_sums = np.sum(gray > 140, axis=1)
     cutoff_y = 0
     for i in range(h):
         if row_sums[i] > (w * 0.15):
             cutoff_y = max(0, i - int(h * 0.05))
             break
-            
-    _, dark_thresh = cv2.threshold(gray, 75, 255, cv2.THRESH_BINARY_INV)
-    
-    kernel_fuse = np.ones((max(5, int(w * 0.02)), max(5, int(w * 0.02))), np.uint8)
-    dark_closed = cv2.morphologyEx(dark_thresh, cv2.MORPH_CLOSE, kernel_fuse)
-    
-    contours_ex, _ = cv2.findContours(dark_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    exclusion_mask = np.zeros((h, w), dtype=np.uint8)
-    
-    for cnt in contours_ex:
-        area = cv2.contourArea(cnt)
-        if area > (total_px * 0.005): 
-            x, y, bw, bh = cv2.boundingRect(cnt)
-            aspect_ratio = float(bw) / max(bh, 1)
-            
-            if 0.3 < aspect_ratio < 3.5:
-                pad_x = int(bw * 0.15)
-                pad_y = int(bh * 0.15)
-                
-                x1 = max(0, x - pad_x)
-                y1 = max(0, y - pad_y)
-                x2 = min(w, x + bw + pad_x)
-                y2 = min(h, y + bh + pad_y)
-                
-                cv2.rectangle(exclusion_mask, (x1, y1), (x2, y2), 255, -1)
-                
     exclusion_mask[:cutoff_y, :] = 255
     
-    lower_white = np.array([0, 0, 150])
-    upper_white = np.array([180, 50, 255])
+    blurred = cv2.GaussianBlur(gray, (35, 35), 0)
+    _, dark_regions = cv2.threshold(blurred, 80, 255, cv2.THRESH_BINARY_INV)
+    contours_ex, _ = cv2.findContours(dark_regions, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for cnt in contours_ex:
+        if cv2.contourArea(cnt) > (total_px * 0.01):
+            cv2.drawContours(exclusion_mask, [cnt], -1, 255, -1)
+            
+    kernel_ex = np.ones((int(w * 0.05), int(w * 0.05)), np.uint8)
+    exclusion_mask = cv2.dilate(exclusion_mask, kernel_ex, iterations=1)
+    
+    lower_white = np.array([0, 0, 160])
+    upper_white = np.array([180, 45, 255])
     lower_dark = np.array([0, 0, 0])
-    upper_dark = np.array([180, 255, 80])
+    upper_dark = np.array([180, 255, 60]) 
     
-    mask_white = cv2.inRange(hsv, lower_white, upper_white)
-    mask_dark = cv2.inRange(hsv, lower_dark, upper_dark)
+    mask_w = cv2.inRange(hsv, lower_white, upper_white)
+    mask_d = cv2.inRange(hsv, lower_dark, upper_dark)
     
-    mask_white = cv2.bitwise_and(mask_white, cv2.bitwise_not(exclusion_mask))
-    mask_dark = cv2.bitwise_and(mask_dark, cv2.bitwise_not(exclusion_mask))
+    mask_w[exclusion_mask == 255] = 0
+    mask_d[exclusion_mask == 255] = 0
     
     kernel_clean = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    mask_white = cv2.morphologyEx(mask_white, cv2.MORPH_OPEN, kernel_clean)
-    mask_dark = cv2.morphologyEx(mask_dark, cv2.MORPH_OPEN, kernel_clean)
+    mask_w = cv2.morphologyEx(mask_w, cv2.MORPH_OPEN, kernel_clean, iterations=1)
+    mask_d = cv2.morphologyEx(mask_d, cv2.MORPH_OPEN, kernel_clean, iterations=1)
     
-    w_px = cv2.countNonZero(mask_white)
-    d_px = cv2.countNonZero(mask_dark)
-    total_crowd = w_px + d_px
+    kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    mask_w = cv2.morphologyEx(mask_w, cv2.MORPH_CLOSE, kernel_close, iterations=1)
+    mask_d = cv2.morphologyEx(mask_d, cv2.MORPH_CLOSE, kernel_close, iterations=1)
     
+    final_mask_w = np.zeros_like(mask_w)
+    final_mask_d = np.zeros_like(mask_d)
+    
+    w_px, d_px = 0, 0
+    
+    contours_w, _ = cv2.findContours(mask_w, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for cnt in contours_w:
+        area = cv2.contourArea(cnt)
+        if area > 10:
+            cv2.drawContours(final_mask_w, [cnt], -1, 255, -1)
+            w_px += area
+            
+    contours_d, _ = cv2.findContours(mask_d, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for cnt in contours_d:
+        area = cv2.contourArea(cnt)
+        if area > 8:
+            cv2.drawContours(final_mask_d, [cnt], -1, 255, -1)
+            d_px += area
+            
     visible_area = total_px - cv2.countNonZero(exclusion_mask)
-    roi_limit = max(visible_area * 0.45, total_px * 0.1) 
+    roi_limit = max(visible_area * 0.45, total_px * 0.1)
     
+    total_crowd = w_px + d_px
     density = min(int((total_crowd / roi_limit) * 100), 100)
     empty = 100 - density
     
@@ -159,9 +165,9 @@ def analyze_pixels(frame):
         m_r, w_r = 0, 0
         
     overlay = frame.copy()
-    overlay[mask_white > 0] = [255, 255, 255]
-    overlay[mask_dark > 0] = [255, 0, 255]
-    overlay[exclusion_mask > 0] = [0, 0, 0] 
+    overlay[final_mask_w > 0] = [255, 255, 255]
+    overlay[final_mask_d > 0] = [255, 0, 255]
+    overlay[exclusion_mask == 255] = [0, 0, 0]
     
     res = cv2.addWeighted(frame, 0.7, overlay, 0.3, 0)
     
