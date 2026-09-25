@@ -8,12 +8,6 @@ import yt_dlp
 
 st.set_page_config(page_title="أرصاد الحشود | Crowd Analytics", page_icon="🕋", layout="wide")
 
-# --- إعدادات المعايرة الحكومية (ROI Calibration) ---
-st.sidebar.markdown("<h2 style='text-align: center;'>⚙️ غرفة التحكم والمعايرة</h2>", unsafe_allow_html=True)
-st.sidebar.markdown("في الأنظمة الأمنية المتقدمة، يتم معايرة زاوية الكاميرا لتجاهل السماء والمباني الثابتة للحصول على دقة 99%.")
-horizon_cutoff_pct = st.sidebar.slider("✂️ اقتطاع الأفق (السماء والمآذن) %", 0, 80, 45, help="اسحب المؤشر لإخفاء المباني العلوية من التحليل")
-kaaba_shield_str = st.sidebar.slider("🕋 قوة درع الكعبة", 10, 100, 40, help="تكبير أو تصغير المربع العازل للكعبة")
-
 def get_b64(bin_file):
     try:
         with open(bin_file, 'rb') as f:
@@ -92,7 +86,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-def analyze_pixels(frame, horizon_pct, shield_str):
+def analyze_pixels(frame):
     h, w = frame.shape[:2]
     total_px = h * w
     
@@ -101,28 +95,25 @@ def analyze_pixels(frame, horizon_pct, shield_str):
     
     exclusion_mask = np.zeros((h, w), dtype=np.uint8)
     
-    # 1. تطبيق الاقتطاع الحكومي (تجاهل ما فوق الأفق)
-    cutoff_y = int(h * (horizon_pct / 100.0))
+    row_sums = np.sum(gray > 140, axis=1)
+    cutoff_y = 0
+    for i in range(h):
+        if row_sums[i] > (w * 0.15):
+            cutoff_y = max(0, i - int(h * 0.05))
+            break
     exclusion_mask[:cutoff_y, :] = 255
     
-    # 2. درع الكعبة التلقائي (يبحث فقط تحت خط الأفق)
-    gray_roi = gray.copy()
-    gray_roi[:cutoff_y, :] = 255 # مسح السماء من البحث
-    
-    blurred = cv2.GaussianBlur(gray_roi, (55, 55), 0)
+    blurred = cv2.GaussianBlur(gray, (35, 35), 0)
     _, dark_regions = cv2.threshold(blurred, 80, 255, cv2.THRESH_BINARY_INV)
     contours_ex, _ = cv2.findContours(dark_regions, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
     for cnt in contours_ex:
         if cv2.contourArea(cnt) > (total_px * 0.01):
             cv2.drawContours(exclusion_mask, [cnt], -1, 255, -1)
             
-    # تكبير درع الكعبة بناءً على إعدادات المستخدم
-    kernel_ex = np.ones((shield_str, shield_str), np.uint8)
-    exclusion_mask = cv2.dilate(exclusion_mask, kernel_ex, iterations=2)
+    kernel_ex = np.ones((int(w * 0.05), int(w * 0.05)), np.uint8)
+    exclusion_mask = cv2.dilate(exclusion_mask, kernel_ex, iterations=1)
     
-    # 3. التحليل الدقيق للحشود (إحرام وعباءات)
-    lower_white = np.array([0, 0, 150])
+    lower_white = np.array([0, 0, 160])
     upper_white = np.array([180, 45, 255])
     lower_dark = np.array([0, 0, 0])
     upper_dark = np.array([180, 255, 60]) 
@@ -130,7 +121,6 @@ def analyze_pixels(frame, horizon_pct, shield_str):
     mask_w = cv2.inRange(hsv, lower_white, upper_white)
     mask_d = cv2.inRange(hsv, lower_dark, upper_dark)
     
-    # حظر مناطق الاستبعاد (السماء + الكعبة) من الحساب
     mask_w[exclusion_mask == 255] = 0
     mask_d[exclusion_mask == 255] = 0
     
@@ -138,12 +128,15 @@ def analyze_pixels(frame, horizon_pct, shield_str):
     mask_w = cv2.morphologyEx(mask_w, cv2.MORPH_OPEN, kernel_clean, iterations=1)
     mask_d = cv2.morphologyEx(mask_d, cv2.MORPH_OPEN, kernel_clean, iterations=1)
     
+    kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    mask_w = cv2.morphologyEx(mask_w, cv2.MORPH_CLOSE, kernel_close, iterations=1)
+    mask_d = cv2.morphologyEx(mask_d, cv2.MORPH_CLOSE, kernel_close, iterations=1)
+    
     final_mask_w = np.zeros_like(mask_w)
     final_mask_d = np.zeros_like(mask_d)
     
     w_px, d_px = 0, 0
     
-    # حساب الإحرامات (الرجال)
     contours_w, _ = cv2.findContours(mask_w, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     for cnt in contours_w:
         area = cv2.contourArea(cnt)
@@ -151,7 +144,6 @@ def analyze_pixels(frame, horizon_pct, shield_str):
             cv2.drawContours(final_mask_w, [cnt], -1, 255, -1)
             w_px += area
             
-    # حساب العباءات (النساء)
     contours_d, _ = cv2.findContours(mask_d, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     for cnt in contours_d:
         area = cv2.contourArea(cnt)
@@ -159,7 +151,6 @@ def analyze_pixels(frame, horizon_pct, shield_str):
             cv2.drawContours(final_mask_d, [cnt], -1, 255, -1)
             d_px += area
             
-    # 4. معادلة الكثافة المعتمدة
     visible_area = total_px - cv2.countNonZero(exclusion_mask)
     roi_limit = max(visible_area * 0.45, total_px * 0.1)
     
@@ -173,11 +164,10 @@ def analyze_pixels(frame, horizon_pct, shield_str):
     else:
         m_r, w_r = 0, 0
         
-    # التلوين النهائي
     overlay = frame.copy()
     overlay[final_mask_w > 0] = [255, 255, 255]
     overlay[final_mask_d > 0] = [255, 0, 255]
-    overlay[exclusion_mask == 255] = [0, 0, 0] # طمس السماء والكعبة لتأكيد العزل
+    overlay[exclusion_mask == 255] = [0, 0, 0]
     
     res = cv2.addWeighted(frame, 0.7, overlay, 0.3, 0)
     
@@ -231,7 +221,7 @@ with tab1:
         dash_ph = [col1.empty(), col2.empty(), col_div.empty(), col3.empty(), col4.empty()]
         
         if st.button("🚀 بدء التحليل", key="btn_img"):
-            out_rgb, dens, emp, m_r, w_r = analyze_pixels(img_array, horizon_cutoff_pct, kaaba_shield_str)
+            out_rgb, dens, emp, m_r, w_r = analyze_pixels(img_array)
             img_ph.image(out_rgb, use_container_width=True)
             update_ui(dens, emp, m_r, w_r, dash_ph)
 
@@ -257,7 +247,7 @@ with tab2:
                 count += 1
                 if count % 3 != 0: continue
                     
-                out_rgb, dens, emp, m_r, w_r = analyze_pixels(frame, horizon_cutoff_pct, kaaba_shield_str)
+                out_rgb, dens, emp, m_r, w_r = analyze_pixels(frame)
                 img_ph.image(out_rgb, use_container_width=True)
                 update_ui(dens, emp, m_r, w_r, dash_ph)
             cap.release()
@@ -287,7 +277,7 @@ with tab3:
                     count += 1
                     if count % 15 != 0: continue
                         
-                    out_rgb, dens, emp, m_r, w_r = analyze_pixels(frame, horizon_cutoff_pct, kaaba_shield_str)
+                    out_rgb, dens, emp, m_r, w_r = analyze_pixels(frame)
                     img_ph.image(out_rgb, use_container_width=True)
                     update_ui(dens, emp, m_r, w_r, dash_ph)
                 cap.release()
